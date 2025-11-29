@@ -1,23 +1,40 @@
-use anyhow::{Error, Result};
-use bytes::{BufMut, BytesMut};
+use anyhow::Result;
 use log::debug;
 
 #[allow(unused_imports)]
 use std::io::{self, Write};
 
-const VALID_COMMANDS: [&str; 1] = ["echo"];
 const EXIT_COMMAND: &str = "exit";
 
-fn handle_command(input: &str) -> (bool, u8) {
-    match input {
-        EXIT_COMMAND => (false, 0u8),
-        val => {
-            if !VALID_COMMANDS.contains(&val) {
-                println!("{}: command not found", input);
-                return (true, 0u8);
-            }
-            (true, 0u8)
+enum Command {
+    Exit(u8),
+    Echo(Vec<String>),
+    Type(String),
+    None, // Empty or whitespace commands
+}
+
+/// Should handle the command's execution and return (should_continue, return_code)
+fn handle_command(cmd: &Command) -> (bool, u8) {
+    match cmd {
+        Command::Exit(code) => (false, *code),
+        Command::Echo(values) => {
+            println!("{}", values.join(" "));
+            (true, 1)
         }
+        _ => (true, 1),
+    }
+}
+
+fn parse_command(input: &str, args: &[String]) -> Option<Command> {
+    match input {
+        EXIT_COMMAND => Some(Command::Exit(0)),
+        val => match val {
+            "echo" => Some(Command::Echo(Vec::from(args))),
+            "type" => Some(Command::Type(String::from(
+                args.first().unwrap_or(&"".to_string()),
+            ))),
+            _ => None,
+        },
     }
 }
 
@@ -29,7 +46,7 @@ fn main() -> Result<()> {
     let mut return_code: u8 = 0;
 
     while next {
-        // Read
+        // Read: Display a prompt and wait for user input
         print!("$ ");
         io::stdout().flush().unwrap();
         io::stdin()
@@ -38,19 +55,27 @@ fn main() -> Result<()> {
         let input = buffer.trim();
 
         debug!("input: {}", input);
-        // Eval
 
-        match shlex::split(input) {
-            Some(args) => {
-                debug!("args: {:?}", args);
-                for arg in args {
-                    (next, return_code) = handle_command(arg.as_str());
-                    debug!("next: {:?}", next);
+        // Eval: Parse and execute the command
+        let values = shlex::split(input).unwrap();
+        let cmd = values.first();
+        if cmd.is_none() {
+            continue;
+        }
+        let cmd = cmd.unwrap();
+        let args = values.split_at(1).1;
+        match parse_command(cmd, &args) {
+            None => {
+                if !cmd.is_empty() {
+                    println!("{}: command not found", cmd);
                 }
             }
-            None => {}
+            Some(cmd) => {
+                (next, return_code) = handle_command(&cmd);
+            }
         }
-        //Print
+
+        // Print: Display the output or error message
         buffer.clear();
 
         //Loop again
