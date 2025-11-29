@@ -10,7 +10,6 @@ enum Command {
     Exit(u8),
     Echo(Vec<String>),
     Type(String),
-    None, // Empty or whitespace commands
 }
 
 /// Should handle the command's execution and return (should_continue, return_code)
@@ -19,6 +18,15 @@ fn handle_command(cmd: &Command) -> (bool, u8) {
         Command::Exit(code) => (false, *code),
         Command::Echo(values) => {
             println!("{}", values.join(" "));
+            (true, 1)
+        }
+        Command::Type(value) => {
+            let cmd = parse_command(value, &[]);
+            if cmd.is_none() && !value.is_empty() {
+                println!("{}: not found", value);
+            } else if !cmd.is_none() {
+                println!("{} is a shell builtin", value);
+            }
             (true, 1)
         }
         _ => (true, 1),
