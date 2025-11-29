@@ -1,14 +1,11 @@
 use anyhow::{Error, Result};
-use log::debug;
+use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
+use std::process::Command;
 use std::process::ExitCode;
 use std::{env, fs};
 
-#[allow(unused_imports)]
-use std::io::{self, Write};
-use std::process::Command;
-
-const BUILTINS: [&str; 3] = ["echo", "exit", "type"];
+const BUILTINS: [&str; 4] = ["echo", "exit", "type", "pwd"];
 
 pub fn find_exec(binary: &str) -> String {
     let paths = env::var("PATH").unwrap_or_default();
@@ -20,15 +17,14 @@ pub fn find_exec(binary: &str) -> String {
         for entry in fs::read_dir(path).expect("Failed to read directory") {
             let entry = entry.expect("Failed to read directory entry");
             let path = entry.path();
-            let path_name = path.to_str().expect("Failed to convert path to string");
             if !path.is_file() {
                 continue;
             }
             let file_name = entry.file_name();
-            if file_name.to_str().expect("Failed to get filename") == binary {
+            if file_name.display().to_string() == binary {
                 let metadata = fs::metadata(&path).expect("Failed to get metadata");
                 if metadata.permissions().mode() & 0o111 != 0 {
-                    return String::from(path_name);
+                    return String::from(path.display().to_string());
                 }
             }
         }
@@ -41,13 +37,12 @@ fn exec_command(input: &str, args: &[String]) -> Result<String, Error> {
     match input {
         "exit" => std::process::exit(0),
         "echo" => Ok(format!("{}", args.join(" "))),
+        "pwd" => Ok(env::current_dir()?.display().to_string()),
         "type" => {
             if BUILTINS.contains(&args[0].as_str()) {
                 return Ok(format!("{} is a shell builtin", &args[0]));
             }
             let exec_path = find_exec(&args[0]);
-            debug!("exec_path {:?}", exec_path);
-
             if exec_path.is_empty() {
                 Ok(format!("{}: not found", &args[0]))
             } else {
@@ -93,8 +88,8 @@ fn eval(input: &str) -> Result<String, Error> {
 }
 
 fn print(s: &str) {
-    if (!s.is_empty()) {
-        println!("{}", s);
+    if !s.is_empty() {
+        println!("{s}");
     }
     io::stdout().flush().unwrap();
 }
@@ -105,7 +100,6 @@ fn main() -> Result<ExitCode> {
     loop {
         // Read: Display a prompt and wait for user input
         let input = read();
-        debug!("input: {}", input);
 
         // Eval: Parse and execute the command
         match eval(&input) {
