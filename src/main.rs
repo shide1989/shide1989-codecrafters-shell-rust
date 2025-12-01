@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::fmt::Display;
 use std::io::{self, Error, ErrorKind, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -40,7 +41,12 @@ fn exec_command(input: &str, args: &Vec<String>) -> Result<String, Error> {
         "echo" => Ok(format!("{}", args.join(" "))),
         "pwd" => Ok(env::current_dir()?.display().to_string()),
         "cd" => {
-            let path = Path::new(&args[0]);
+            let hd = env::home_dir().expect("Failed to get home directory");
+            let path = if args[0] == "~" {
+                Path::new(hd.to_str().unwrap())
+            } else {
+                Path::new(&args[0])
+            };
             env::set_current_dir(path).map_err(|_| {
                 Error::new(
                     ErrorKind::NotFound,
