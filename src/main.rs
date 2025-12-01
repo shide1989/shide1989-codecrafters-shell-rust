@@ -1,11 +1,12 @@
-use anyhow::{Error, Result};
-use std::io::{self, Write};
+use anyhow::Result;
+use std::io::{self, Error, ErrorKind, Write};
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::process::Command;
 use std::process::ExitCode;
 use std::{env, fs};
 
-const BUILTINS: [&str; 4] = ["echo", "exit", "type", "pwd"];
+const BUILTINS: [&str; 5] = ["echo", "exit", "type", "pwd", "cd"];
 
 pub fn find_exec(binary: &str) -> String {
     let paths = env::var("PATH").unwrap_or_default();
@@ -33,18 +34,34 @@ pub fn find_exec(binary: &str) -> String {
     String::from("")
 }
 
-fn exec_command(input: &str, args: &[String]) -> Result<String, Error> {
+fn exec_command(input: &str, args: &Vec<String>) -> Result<String, Error> {
     match input {
         "exit" => std::process::exit(0),
         "echo" => Ok(format!("{}", args.join(" "))),
         "pwd" => Ok(env::current_dir()?.display().to_string()),
+        "cd" => {
+            let path = Path::new(&args[0]);
+            env::set_current_dir(path).map_err(|_| {
+                Error::new(
+                    ErrorKind::NotFound,
+                    format!(
+                        "{input}: {}: No such file or directory",
+                        path.to_str().unwrap()
+                    ),
+                )
+            })?;
+            Ok(String::new())
+        }
         "type" => {
             if BUILTINS.contains(&args[0].as_str()) {
                 return Ok(format!("{} is a shell builtin", &args[0]));
             }
             let exec_path = find_exec(&args[0]);
             if exec_path.is_empty() {
-                Ok(format!("{}: not found", &args[0]))
+                Err(Error::new(
+                    ErrorKind::NotFound,
+                    format!("{}: not found", &args[0]),
+                ))
             } else {
                 Ok(format!("{} is {}", &args[0], exec_path))
             }
@@ -52,7 +69,10 @@ fn exec_command(input: &str, args: &[String]) -> Result<String, Error> {
         _ => {
             let exec_path = find_exec(input);
             if exec_path.is_empty() {
-                return Ok(format!("{}: command not found", input));
+                return Err(Error::new(
+                    ErrorKind::NotFound,
+                    format!("{input}: command not found"),
+                ));
             }
             let mut process = Command::new(input)
                 .args(args)
@@ -60,7 +80,7 @@ fn exec_command(input: &str, args: &[String]) -> Result<String, Error> {
                 .expect("Failed to execute command");
             match process.wait() {
                 Ok(_) => Ok(String::new()),
-                Err(error) => Err(Error::new(error)),
+                Err(error) => Err(error),
             }
         }
     }
@@ -76,15 +96,19 @@ fn read() -> String {
     buffer.trim().to_string()
 }
 
-fn eval(input: &str) -> Result<String, Error> {
+fn parse(input: &str) -> (Option<String>, Vec<String>) {
     // Parse the command and args
-    let values = shlex::split(input).unwrap();
-    let cmd = values.first();
+    let values = match shlex::split(input) {
+        Some(values) => values,
+        None => return (None, Vec::new()),
+    };
+
+    let cmd = values.first().cloned();
     if cmd.is_none() {
-        return Ok(String::new());
+        return (None, Vec::new());
     }
-    let args = values.split_at(1).1;
-    exec_command(cmd.unwrap(), args)
+    let args = values.split_at(1).1.to_vec();
+    (cmd, args)
 }
 
 fn print(s: &str) {
@@ -101,13 +125,25 @@ fn main() -> Result<ExitCode> {
         // Read: Display a prompt and wait for user input
         let input = read();
 
+        let (cmd, args) = parse(input.trim());
+
+        let cmd = match cmd {
+            Some(cmd) => cmd,
+            None => continue,
+        };
+
         // Eval: Parse and execute the command
-        match eval(&input) {
-            Ok(output) => print(&output),
+        match exec_command(&cmd, &args) {
+            Ok(output) => {
+                if !output.is_empty() {
+                    println!("{output}");
+                }
+                io::stdout().flush()?;
+            }
             Err(err) => {
                 // Print: Display the output or error message
-                print(&err.to_string());
-                return Ok(ExitCode::FAILURE);
+                print(format!("{}", err).as_str());
+                // return Ok(ExitCode::FAILURE);
             }
         }
         //Loop again
